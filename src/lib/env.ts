@@ -63,11 +63,12 @@ export const env = {
   get googleClientSecret() {
     return req("GOOGLE_CLIENT_SECRET");
   },
-  get geminiApiKey() {
-    return opt("GEMINI_API_KEY");
+  /** Anthropic API key for Claude (matching help). Optional: without it, unsure songs go to manual review. */
+  get anthropicApiKey() {
+    return opt("ANTHROPIC_API_KEY");
   },
-  get geminiModel() {
-    return opt("GEMINI_MODEL") ?? "gemini-3.5-flash";
+  get claudeModel() {
+    return opt("CLAUDE_MODEL") ?? "claude-opus-5-5";
   },
   /** Tiger Data (TimescaleDB) connection string. Optional: events always go to MongoDB too. */
   get tigerUrl() {

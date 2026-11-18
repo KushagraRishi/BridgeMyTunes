@@ -1,5 +1,5 @@
 import "server-only";
-import { GoogleGenAI, Type } from "@google/genai";
+import Anthropic from "@anthropic-ai/sdk";
 import { env } from "../env";
 import type { ScoredCandidate, Track } from "../types";
 
@@ -18,29 +18,54 @@ export interface AiVerdict {
   reason: string;
 }
 
-let client: GoogleGenAI | null = null;
+let client: Anthropic | null = null;
 
-/** The configured model first; when it's overloaded or unavailable, the lighter model answers instead. */
-const FALLBACK_MODEL = "gemini-3.5-flash-lite";
+type Schema = Record<string, unknown>;
 
-type GenerateParams = Parameters<GoogleGenAI["models"]["generateContent"]>[0];
-
-async function generate(params: Omit<GenerateParams, "model">) {
-  client ??= new GoogleGenAI({ apiKey: env.geminiApiKey!, httpOptions: { timeout: 25_000 } });
-  const models = [...new Set([env.geminiModel, FALLBACK_MODEL])];
-  let last: unknown;
-  for (const model of models) {
-    try {
-      return await client.models.generateContent({ ...params, model });
-    } catch (err) {
-      last = err;
-      console.warn(`[gemini] ${model} failed, ${model === models.at(-1) ? "giving up" : "trying the next model"}:`, String(err).slice(0, 160));
-    }
-  }
-  throw last;
+/**
+ * One Claude call that must answer with JSON matching `schema`. The answer is wrapped as {"results": [...]}
+ * because structured outputs need an object at the top. On a policy decline the API retries on a fallback model
+ * by itself ("fallbacks": "default"). Throws when there is no usable answer; callers catch and return [].
+ */
+async function ask(system: string, prompt: string, item: Schema): Promise<unknown[]> {
+  client ??= new Anthropic({ apiKey: env.anthropicApiKey!, timeout: 60_000, maxRetries: 2 });
+  const res = await client.beta.messages.create({
+    model: env.claudeModel,
+    max_tokens: 16000,
+    betas: ["server-side-fallback-2026-07-01"],
+    fallbacks: "default",
+    output_config: {
+      effort: "low",
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: { results: { type: "array", items: item } },
+          required: ["results"],
+          additionalProperties: false,
+        },
+      },
+    },
+    system,
+    messages: [{ role: "user", content: prompt }],
+  });
+  if (res.stop_reason === "refusal") throw new Error(`Claude declined: ${res.stop_details?.category ?? "no category"}`);
+  if (res.stop_reason === "max_tokens") throw new Error("Claude ran out of output tokens");
+  const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("");
+  const parsed = JSON.parse(text) as { results?: unknown };
+  return Array.isArray(parsed.results) ? parsed.results : [];
 }
 
-export const aiEnabled = () => Boolean(env.geminiApiKey);
+const obj = (properties: Schema, required = Object.keys(properties)): Schema => ({
+  type: "object",
+  properties,
+  required,
+  additionalProperties: false,
+});
+const str = { type: "string" };
+const int = { type: "integer" };
+
+export const aiEnabled = () => Boolean(env.anthropicApiKey);
 
 const fmt = (t: Track) =>
   JSON.stringify({
@@ -66,9 +91,9 @@ Rules:
 - differences: short human-readable notes such as "Remastered version", "Clean version", "Live version". Empty if identical.
 - reason: one short sentence.`;
 
-/** Ask Gemini to adjudicate uncertain matches, several per request. Returns [] if AI is disabled or fails. */
+/** Ask Claude to adjudicate uncertain matches, several per request. Returns [] if AI is disabled or fails. */
 export async function adjudicate(cases: AiCase[]): Promise<AiVerdict[]> {
-  if (!cases.length || !env.geminiApiKey) return [];
+  if (!cases.length || !env.anthropicApiKey) return [];
 
   const prompt = cases
     .map(
@@ -78,36 +103,20 @@ export async function adjudicate(cases: AiCase[]): Promise<AiVerdict[]> {
     .join("\n\n");
 
   try {
-    const res = await generate({
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM,
-        temperature: 0,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              key: { type: Type.INTEGER },
-              choice: { type: Type.INTEGER },
-              confidence: { type: Type.NUMBER },
-              differences: { type: Type.ARRAY, items: { type: Type.STRING } },
-              reason: { type: Type.STRING },
-            },
-            required: ["key", "choice", "confidence", "differences", "reason"],
-          },
-        },
-      },
-    });
-    const parsed = JSON.parse(res.text ?? "[]") as AiVerdict[];
+    const parsed = (await ask(SYSTEM, prompt, obj({
+      key: int,
+      choice: int,
+      confidence: { type: "number" },
+      differences: { type: "array", items: str },
+      reason: str,
+    }))) as AiVerdict[];
     const byKey = new Map(cases.map((c) => [c.key, c]));
     return parsed.filter((v) => {
       const c = byKey.get(v.key);
       return c && Number.isInteger(v.choice) && v.choice >= -1 && v.choice < c.candidates.length;
     });
   } catch (err) {
-    console.error("[gemini] adjudication failed:", err);
+    console.error("[ai] adjudication failed:", err);
     return [];
   }
 }
@@ -133,45 +142,19 @@ Rules:
 - Keep the version words that matter: Live, Remix, Acoustic, Slowed, a featured artist.
 - Never invent a different song. If you can't tell what the song is, return no queries for that case.`;
 
-/** Ask Gemini for cleaner searches for songs the catalog search missed, several per request. [] if AI is off or fails. */
+/** Ask Claude for cleaner searches for songs the catalog search missed, several per request. [] if AI is off or fails. */
 export async function suggestSearches(cases: QueryCase[], destination: string): Promise<QuerySuggestion[]> {
-  if (!cases.length || !env.geminiApiKey) return [];
+  if (!cases.length || !env.anthropicApiKey) return [];
   const prompt =
     `Service to search: ${destination}\n\n` + cases.map((c) => `Case ${c.key}\nSong: ${fmt(c.source)}`).join("\n\n");
   try {
-    const res = await generate({
-      contents: prompt,
-      config: {
-        systemInstruction: SUGGEST,
-        temperature: 0,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              key: { type: Type.INTEGER },
-              queries: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: { title: { type: Type.STRING }, artist: { type: Type.STRING } },
-                  required: ["title", "artist"],
-                },
-              },
-            },
-            required: ["key", "queries"],
-          },
-        },
-      },
-    });
-    const parsed = JSON.parse(res.text ?? "[]") as QuerySuggestion[];
+    const parsed = (await ask(SUGGEST, prompt, obj({ key: int, queries: { type: "array", items: obj({ title: str, artist: str }) } }))) as QuerySuggestion[];
     const keys = new Set(cases.map((c) => c.key));
     return parsed
       .filter((s) => keys.has(s.key) && Array.isArray(s.queries))
       .map((s) => ({ key: s.key, queries: s.queries.filter((q) => q?.title?.trim()).slice(0, 2) }));
   } catch (err) {
-    console.error("[gemini] search suggestions failed:", err);
+    console.error("[ai] search suggestions failed:", err);
     return [];
   }
 }
@@ -191,45 +174,19 @@ Rules:
 - Never suggest the exact same recording that was already searched for.
 - why: a few words a listener understands, e.g. "Acoustic version", "Same artist, same album", "Similar 2000s Hindi pop".`;
 
-/** Ask Gemini for similar songs to offer instead of ones the destination doesn't have. [] if AI is off or fails. */
+/** Ask Claude for similar songs to offer instead of ones the destination doesn't have. [] if AI is off or fails. */
 export async function suggestReplacements(cases: QueryCase[], destination: string): Promise<ReplacementIdea[]> {
-  if (!cases.length || !env.geminiApiKey) return [];
+  if (!cases.length || !env.anthropicApiKey) return [];
   const prompt =
     `Destination service: ${destination}\n\n` + cases.map((c) => `Case ${c.key}\nMissing song: ${fmt(c.source)}`).join("\n\n");
   try {
-    const res = await generate({
-      contents: prompt,
-      config: {
-        systemInstruction: REPLACE,
-        temperature: 0.2,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              key: { type: Type.INTEGER },
-              songs: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: { title: { type: Type.STRING }, artist: { type: Type.STRING }, why: { type: Type.STRING } },
-                  required: ["title", "artist", "why"],
-                },
-              },
-            },
-            required: ["key", "songs"],
-          },
-        },
-      },
-    });
-    const parsed = JSON.parse(res.text ?? "[]") as ReplacementIdea[];
+    const parsed = (await ask(REPLACE, prompt, obj({ key: int, songs: { type: "array", items: obj({ title: str, artist: str, why: str }) } }))) as ReplacementIdea[];
     const keys = new Set(cases.map((c) => c.key));
     return parsed
       .filter((r) => keys.has(r.key) && Array.isArray(r.songs))
       .map((r) => ({ key: r.key, songs: r.songs.filter((x) => x?.title?.trim() && x?.artist?.trim()).slice(0, 3) }));
   } catch (err) {
-    console.error("[gemini] replacement suggestions failed:", err);
+    console.error("[ai] replacement suggestions failed:", err);
     return [];
   }
 }

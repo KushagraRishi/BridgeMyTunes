@@ -14,7 +14,7 @@ Live: **https://bridgemytunes-chi.vercel.app**
 | **No sign-in to read links** | Public YouTube playlists via the YouTube Data API key, Apple Music catalog playlists and albums via the developer token, Spotify songs and albums via the app token, Spotify playlists via the public embed player page. | `src/lib/platforms/` |
 | **Spotify without a sign-in** | Spotify's Development Mode only allows 5 tester accounts. For everyone else, a BridgeMyTunes "house" Spotify account makes a public playlist and hands back its link. | `src/lib/platforms/house.ts` |
 | **Switch apps** | Move playlists and liked songs from YouTube Music or Apple Music to YouTube Music, Apple Music or Spotify. If you're not signed in to the source, paste any number of public playlist links instead. | `src/app/switch` |
-| **Smart matching** | cache → ISRC → metadata scoring → Gemini search → Gemini check → you. Details below. | `src/lib/matching/` |
+| **Smart matching** | cache → ISRC → metadata scoring → Claude search → Claude check → you. Details below. | `src/lib/matching/` |
 | **Review** | Live progress, then a review screen for uncertain and missing songs with manual search and "Try again". | `src/components/TransferView.tsx` |
 
 ## How matching works
@@ -25,15 +25,15 @@ Live: **https://bridgemytunes-chi.vercel.app**
    noise (`- Remastered 2011`, `(feat. X)`, soundtrack subtitles). Live, acoustic, remix and sped-up versions, a
    missing or extra featured artist, and fan or lyric re-uploads on YouTube all lose points. 0.85 or more is a match;
    below 0.45 is "not found".
-4. **Gemini search** (for songs the search missed, up to 25 per transfer): Gemini suggests up to two cleaner searches,
+4. **Claude search** (for songs the search missed, up to 25 per transfer): Claude suggests up to two cleaner searches,
    such as removing "(Official Video 4K)", using the real artist instead of a label channel, or using the other script
    ("तुम ही हो" → "Tum Hi Ho"). The results are scored by step 3's rules.
-5. **Gemini check** (scores 0.45 to 0.85, 8 songs per request): Gemini picks the same recording or none, with a
+5. **Claude check** (scores 0.45 to 0.85, 8 songs per request): Claude picks the same recording or none, with a
    confidence, the differences and a reason. 80% or more is accepted, unless it would swap clean and explicit.
-6. **You**: anything still uncertain waits on the review screen, with Gemini's pick on top.
+6. **You**: anything still uncertain waits on the review screen, with Claude's pick on top.
 
-Gemini tries `GEMINI_MODEL` first and falls back to `gemini-3.5-flash-lite` when it's busy. Without a key, steps 4
-and 5 are skipped. `npm test` runs the matcher, link-parser and page-parser tests.
+Claude runs `CLAUDE_MODEL` (default `claude-opus-5-5`) at low effort. If it declines a request, the API retries on a
+fallback model by itself. Without a key, steps 4 and 5 are skipped. `npm test` runs the matcher, link-parser and page-parser tests.
 
 ## What we use
 
@@ -43,7 +43,7 @@ and 5 are skipped. `npm test` runs the matcher, link-parser and page-parser test
 | --- | --- |
 | Framework | Next.js 16 (App Router, `after()` for background transfers, up to 5 min each), React 19, TypeScript |
 | Database | MongoDB Atlas via the `mongodb` driver: `users`, `connections`, `playlists`, `transfers`, `mappings`, `events`, `settings` |
-| AI | Google Gemini via `@google/genai` |
+| AI | Claude (Anthropic API) via `@anthropic-ai/sdk`, structured JSON output |
 | Apple tokens | `jose` signs the ES256 MusicKit developer token |
 | Analytics (optional) | Tiger Data / TimescaleDB via `pg` |
 | Tests | Vitest |
@@ -57,7 +57,7 @@ and 5 are skipped. `npm test` runs the matcher, link-parser and page-parser test
 | Spotify embed player page | Reading public playlists without a sign-in | Unofficial and against Spotify's terms; first 100 songs; private playlists can't be read. Off switch: `SPOTIFY_EMBED_DISABLED=1` |
 | Apple Music API + MusicKit JS | Catalog lookups and ISRC search; users sign in in the browser to add to their library | Needs an Apple Developer account; users need an Apple Music subscription |
 | YouTube Data API v3 + Google OAuth | Reading public playlists (API key); creating playlists and liking songs (sign-in) | 10,000 quota units a day (a search costs 100); the OAuth app is unverified, so up to 100 users and a warning screen |
-| Gemini API | Matching steps 4 and 5 | Model availability changes; the fallback model covers busy periods |
+| Anthropic API (Claude) | Matching steps 4 and 5, similar-song ideas | Paid per token from your API key |
 | MongoDB Atlas | All app data | Network Access must allow `0.0.0.0/0` for Vercel |
 
 ### Images, logos and fonts
@@ -102,7 +102,7 @@ a missing song) and a separate `<db>_demo` database, so you can demo the whole f
   `APPLE_TEAM_ID`, `APPLE_KEY_ID` and the `.p8` key (`keys/` and `*.p8` are git-ignored).
 - **YouTube Music**: Google Cloud → enable YouTube Data API v3 → an API key (`YOUTUBE_API_KEY`), and an OAuth client
   (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) with redirect `<app>/api/auth/youtube/callback` and scope `youtube`.
-- **Gemini**: `GEMINI_API_KEY` from Google AI Studio. Optional.
+- **Claude**: `ANTHROPIC_API_KEY` from the Anthropic Console (platform.claude.com). Optional.
 
 All settings are listed in [.env.example](.env.example). Deploying is in [DEPLOY.md](DEPLOY.md).
 

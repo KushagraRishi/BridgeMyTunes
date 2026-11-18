@@ -34,7 +34,7 @@ About 15 minutes. This is a Next.js app, so Vercel builds it straight from this 
 | `GOOGLE_CLIENT_ID` | Google Cloud → OAuth client (web) | For YouTube Music sign-in |
 | `GOOGLE_CLIENT_SECRET` | Same OAuth client | For YouTube Music sign-in |
 | `ADMIN_KEY` | Any long random string; guards the house-account setup | For the Spotify house account |
-| `GEMINI_API_KEY` | https://aistudio.google.com/apikey | Optional |
+| `ANTHROPIC_API_KEY` | https://platform.claude.com/settings/keys | Optional |
 | `SPOTIFY_HOUSE_DISABLED` / `SPOTIFY_EMBED_DISABLED` | `1` switches that feature off | Optional |
 | `APP_URL` | Only for a custom domain, e.g. `https://bridgemytunes.com`. Otherwise the Vercel address is used automatically. | Optional |
 

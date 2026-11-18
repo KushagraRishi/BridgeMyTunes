@@ -2,7 +2,7 @@ import "server-only";
 import { collections } from "../db";
 import type { MusicAdapter } from "../platforms/types";
 import type { MatchResult, Platform, Replacement, ScoredCandidate, Track } from "../types";
-import { adjudicate, aiEnabled, suggestReplacements, suggestSearches, type AiCase } from "./gemini";
+import { adjudicate, aiEnabled, suggestReplacements, suggestSearches, type AiCase } from "./ai";
 import { MAJOR_TAGS, parseTitle, primaryArtist } from "./normalize";
 import { AUTO_ACCEPT, CONSIDER, rankCandidates } from "./score";
 
@@ -11,16 +11,16 @@ import { AUTO_ACCEPT, CONSIDER, rankCandidates } from "./score";
  *   1. already known  – the track carries a destination id, or a confirmed mapping is cached in MongoDB
  *   2. ISRC           – exact recording lookup on the destination
  *   3. metadata       – search by title + artist, score title/artist/album/duration/version
- *   3b. Gemini search – for songs the search missed, Gemini suggests cleaner searches (video noise removed,
+ *   3b. Claude search – for songs the search missed, Claude suggests cleaner searches (video noise removed,
  *                      real artist, other script); the results are scored by the same rules as step 3
- *   4. Gemini         – batch-adjudicate anything that scored between CONSIDER and AUTO_ACCEPT
- *   4b. replacements  – for songs that still aren't there, Gemini suggests up to 3 similar songs, each confirmed to
+ *   4. Claude         – batch-adjudicate anything that scored between CONSIDER and AUTO_ACCEPT
+ *   4b. replacements  – for songs that still aren't there, Claude suggests up to 3 similar songs, each confirmed to
  *                      exist on the destination by a search; the user can add one instead on the review screen
  *   5. user review    – whatever is still uncertain or unavailable
  */
 
 const MAX_CANDIDATES = 5;
-/** At most this many missed songs per transfer get Gemini searches (each search costs destination API quota). */
+/** At most this many missed songs per transfer get Claude searches (each search costs destination API quota). */
 const MAX_RESCUES = 25;
 /** At most this many missing songs per transfer get replacement suggestions, at most 2 offered each (quota again). */
 const MAX_REPLACED = 10;
@@ -130,7 +130,7 @@ export async function matchTracks(tracks: Track[], dest: MusicAdapter, opts: Mat
         flags: best.breakdown.flags,
       });
     } else if (best && best.score >= CONSIDER) {
-      // Tentatively uncertain; Gemini may promote or reject it below.
+      // Tentatively uncertain; Claude may promote or reject it below.
       settle(i, { status: "uncertain", method: "metadata", confidence: best.score, match: strip(best), candidates, flags: best.breakdown.flags });
       forAi.push({ key: i, source: src, candidates });
     } else {
@@ -139,7 +139,7 @@ export async function matchTracks(tracks: Track[], dest: MusicAdapter, opts: Mat
     await report();
   });
 
-  // 3b. Songs the search missed: Gemini suggests cleaner searches, which are scored like any other result.
+  // 3b. Songs the search missed: Claude suggests cleaner searches, which are scored like any other result.
   const missed = results
     .filter((r): r is MatchResult => r?.status === "unavailable")
     .slice(0, MAX_RESCUES)
@@ -158,7 +158,7 @@ export async function matchTracks(tracks: Track[], dest: MusicAdapter, opts: Mat
           try {
             ranked = rankCandidates(src, [...ranked, ...(await dest.search({ title: q.title, artist: q.artist }))]);
           } catch (err) {
-            console.warn(`[match] Gemini search failed for "${q.title}":`, err);
+            console.warn(`[match] Claude search failed for "${q.title}":`, err);
           }
           if (ranked[0]?.score >= AUTO_ACCEPT) break;
         }
@@ -170,7 +170,7 @@ export async function matchTracks(tracks: Track[], dest: MusicAdapter, opts: Mat
         if (best.score >= AUTO_ACCEPT) {
           r.status = "matched";
           r.method = "ai";
-          r.aiReason = "Found with a cleaner search from Gemini";
+          r.aiReason = "Found with a cleaner search from Claude";
         } else {
           r.status = "uncertain";
           r.method = "metadata";
@@ -181,7 +181,7 @@ export async function matchTracks(tracks: Track[], dest: MusicAdapter, opts: Mat
     }
   }
 
-  // 4. Gemini adjudication, 8 cases per request
+  // 4. Claude adjudication, 8 cases per request
   if (aiEnabled() && forAi.length) {
     for (let b = 0; b < forAi.length; b += 8) {
       const batch = forAi.slice(b, b + 8);

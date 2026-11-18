@@ -35,7 +35,7 @@ const METHOD_LABEL: Record<MatchResult["method"], string> = {
   cache: "Known match",
   isrc: "ISRC",
   metadata: "Metadata",
-  ai: "Gemini",
+  ai: "Claude",
   manual: "You picked",
   none: "No match",
 };
@@ -98,13 +98,13 @@ function ReviewItem({
           ))}
         </div>
         <TrackRow track={r.source} />
-        {r.aiReason && <p className="label">Gemini: {r.aiReason}</p>}
+        {r.aiReason && <p className="label">Claude: {r.aiReason}</p>}
       </div>
 
       <div className="review__pick">
         {r.status === "unavailable" && r.replacements?.length ? (
           <div className="replace">
-            <p className="label">Not on {serviceName(destination)}. Gemini suggests a similar song instead:</p>
+            <p className="label">Not on {serviceName(destination)}. Claude suggests a similar song instead:</p>
             <ul className="replace__list">
               {r.replacements.map((x) => (
                 <li key={x.ids[destination] ?? x.title} className="replace__row">

@@ -12,7 +12,7 @@ import {
 
 /** At or above this a match is accepted automatically. */
 export const AUTO_ACCEPT = 0.85;
-/** Between this and AUTO_ACCEPT a match is "uncertain" (Gemini is asked, then the user if still unsure). */
+/** Between this and AUTO_ACCEPT a match is "uncertain" (Claude is asked, then the user if still unsure). */
 export const CONSIDER = 0.45;
 
 export interface ScoreBreakdown {

@@ -34,7 +34,7 @@ export default function About() {
       <ul>
         <li>Paste a song, album or playlist link from Spotify, Apple Music or YouTube Music.</li>
         <li>BridgeMyTunes looks up every song on the other apps. It matches the exact recording first (its ISRC code), then the title, artist, album and length.</li>
-        <li>For close calls, Google Gemini checks whether it&apos;s really the same recording and not a live, remix or sped-up version. It also finds songs a normal search misses and suggests similar songs when one isn&apos;t available.</li>
+        <li>For close calls, Claude checks whether it&apos;s really the same recording and not a live, remix or sped-up version. It also finds songs a normal search misses and suggests similar songs when one isn&apos;t available.</li>
         <li>Anything still unsure waits for you to review, so nothing is swapped without you knowing.</li>
       </ul>
 

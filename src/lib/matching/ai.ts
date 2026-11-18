@@ -51,6 +51,7 @@ async function ask(system: string, prompt: string, item: Schema): Promise<unknow
   });
   if (res.stop_reason === "refusal") throw new Error(`Claude declined: ${res.stop_details?.category ?? "no category"}`);
   if (res.stop_reason === "max_tokens") throw new Error("Claude ran out of output tokens");
+  console.info(`[ai] ${res.model} answered (${res.usage.input_tokens} in, ${res.usage.output_tokens} out tokens)`);
   const text = res.content.map((b) => (b.type === "text" ? b.text : "")).join("");
   const parsed = JSON.parse(text) as { results?: unknown };
   return Array.isArray(parsed.results) ? parsed.results : [];
